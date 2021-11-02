@@ -45,6 +45,80 @@ anova(m1, m2, test = "F")
 summary(m1)
 with(summary(m1), 1 - deviance/null.deviance) 
 
+# Run GLM on each environmental level- consistency across levels?
+
+# Level 1
+df_glm_1 <- df %>%
+  group_by(EMPO_level1) %>%
+  do(mod = glm(log10(DR_count) ~ log10(viral_abund),data = .))
+
+# Get coefficients from list:
+df_coef_1 <- df_glm_1 %>%
+  do(data.frame(
+    EMPO_level = .$EMPO_level1,
+    var = names(coef(.$mod)),
+    coef(summary(.$mod)),
+    level = 1)
+  )
+
+# Repeat for EMPO level 2 and 3
+
+df_glm_2 <- df %>%
+  group_by(EMPO_level2) %>%
+  do(mod = glm(log10(DR_count) ~ log10(viral_abund),data = .))
+
+df_coef_2 <- df_glm_2 %>%
+  do(data.frame(
+    EMPO_level = .$EMPO_level2,
+    var = names(coef(.$mod)),
+    coef(summary(.$mod)),
+    level = 2)
+  )
+
+df_glm_3 <- df %>%
+  group_by(EMPO_level3) %>%
+  do(mod = glm(log10(DR_count) ~ log10(viral_abund),data = .))
+
+df_coef_3 <- df_glm_3 %>%
+  do(data.frame(
+    EMPO_level = .$EMPO_level3,
+    var = names(coef(.$mod)),
+    coef(summary(.$mod)),
+    level = 3)
+  )
+
+# Stick them together, remove intercepts, FDR correct, label
+tmp<-df_coef_1 %>%
+  bind_rows(df_coef_2) %>%
+  bind_rows(df_coef_3) %>%
+  filter( !var == "(Intercept)")
+
+tmp$padj<-p.adjust(tmp$Pr...t.., method = "fdr", n = length(tmp$Pr...t..))
+
+tmp<-tmp %>%
+  mutate(sig = case_when(padj <= 0.05 & padj > 0.01 ~ "*",
+                         padj <= 0.01 & padj > 0.001 ~ "**",
+                         padj <= 0.001 ~ "***",
+                         padj > 0.05 ~ "",
+                         TRUE ~ "NA")) %>%
+  select( -var)
+
+colnames(tmp)<-c("EMPO category","Estimate", "Std. Error", "t-value", "P-value", "EMPO level", "padj", "sig")
+
+tmp<-tmp %>%
+  mutate(Estimate = round( Estimate, digits = 3),
+         `Std. Error` = round(`Std. Error`, 3),
+         `t-value` = round( `t-value`, 3),
+         `P-value`= round(`P-value`, 3),
+         padj = round(padj, 3)) %>%
+  mutate( padj = case_when(padj == "0" ~ "<0.001",
+                           TRUE ~ as.character(padj))) %>%
+  mutate( `P-value` = case_when(`P-value` == "0" ~ "<0.001",
+                                TRUE ~ as.character(`P-value`))) %>%
+  rename( 'adjusted-p-value' = padj ,
+          significance = sig)
+
+tmp
 
 # Plot the correlations split  by environment for supplemental / panel plot:
 # Add colors manually for consistency later
@@ -96,16 +170,16 @@ col <- as.character(col_df$color)
 names(col) <- as.character(col_df$EMPO_level3)
 names(col)<-gsub("_", "\n", names(col))
 
-# Split level 3 into significant positive and non-cors.
+# Split level 3 into significant and non-significant correlations from post-hoc testing
 
-posi<-c('distal\ngut', 'water\nsaline', 'surface\nsaline')
+posi<-c('distal\ngut', 'water\nsaline', 'surface\nsaline', 'sediment\nnonsaline')
 
 options(scipen=0)
 
 c<-df %>%
   mutate(EMPO_level3 = gsub("_", "\n", EMPO_level3)) %>%
   mutate( significant = ifelse(EMPO_level3 %in% posi, "adjusted p < 0.05", "NS")) %>%
-  ggplot(., aes(DR_count, viral_abund))+
+  ggplot(., aes(DR_count, viral_abund, label = sample))+
   geom_point( aes(color = EMPO_level3))+
   scale_y_log10()+
   scale_x_log10()+
@@ -123,4 +197,6 @@ c<-df %>%
 egg::ggarrange(a, b, labels = c('A','B'), ncol= 2)
 egg::ggarrange(c, labels = 'C')
 
+library(plotly)
+plotly::ggplotly(c)
 
